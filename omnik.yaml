@@ -1,0 +1,189 @@
+esphome:
+  name: omnik
+  friendly_name: omnik
+  includes:
+    - omnik.h
+  on_boot:
+    priority: -100
+    then:
+      while:
+        condition: 
+          - lambda: "return true;"
+        then:
+          - if:
+              condition:
+                binary_sensor.is_on: inverter_isRegistered
+              then:
+                - script.execute: inverter_request_metrics
+              else:
+                - script.execute: inverter_register
+          - delay: !lambda "return id(refresh_interval).state * 1000;" 
+
+esp8266:
+  board: d1_mini
+  restore_from_flash: True
+
+# Enable logging
+logger:
+  baud_rate: 0
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "your_encryption_key="
+
+ota:
+  password: "your_ota_password"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Omnik Fallback Hotspot"
+    password: "your_fallback_hatspot_password"
+
+captive_portal:
+
+uart:
+  id: uart_bus
+  tx_pin: 15
+  rx_pin: 13
+  baud_rate: 9600
+  # debug:
+
+script:
+  - id: inverter_register
+    then:
+      - uart.write: [0x3a,0x3a,0x01,0x00,0x00,0x00,0x10,0x04,0x00,0x00,0x89]
+      - delay: 0.5s
+      - uart.write: [0x3a,0x3a,0x01,0x00,0x00,0x00,0x10,0x04,0x00,0x00,0x89]
+      - delay: 0.5s
+      - uart.write: [0x3a,0x3a,0x01,0x00,0x00,0x00,0x10,0x04,0x00,0x00,0x89]
+      - delay: 0.5s
+      - uart.write: [0x3a,0x3a,0x01,0x00,0x00,0x00,0x10,0x00,0x00,0x00,0x85]
+  - id: inverter_request_metrics
+    then:
+      - uart.write: [0x3a,0x3a,0x01,0x00,0x00,0x01,0x11,0x10,0x00,0x00,0x97]
+      - script.execute: registration_timeout
+  - id: inverter_ping
+    then:
+      - uart.write: [0x3a,0x3a,0x01,0x00,0x00,0x01,0x11,0x43,0x00,0x00,0xca]
+      - script.execute: registration_timeout
+  - id: registration_timeout
+    then: 
+      - delay: !lambda "return id(refresh_interval).state * 1000 * 3;" 
+      - lambda: id(inverter_isRegistered).publish_state(false);
+
+
+sensor:
+  - platform: custom
+    lambda: |-
+      auto inverter = new omnik(id(uart_bus));
+      App.register_component(inverter);
+      return {inverter->temperature_sensor,
+              inverter->pv1_v_sensor,inverter->pv2_v_sensor,
+              inverter->pv1_i_sensor,inverter->pv2_i_sensor,
+              inverter->ac1_i_sensor,inverter->ac1_v_sensor,
+              inverter->ac1_f_sensor,inverter->ac1_p_sensor,
+              inverter->e_today_sensor,
+              inverter->e_total_sensor,
+              inverter->h_total_sensor
+      };
+    sensors:
+    - name: "Temperature"
+      device_class: "temperature"
+      state_class: "measurement"
+      unit_of_measurement: °C
+      accuracy_decimals: 1
+    - name: "PV1 Voltage"
+      device_class: "voltage"
+      state_class: "measurement"
+      unit_of_measurement: V
+      accuracy_decimals: 1
+    - name: "PV2 Voltage"
+      device_class: "voltage"
+      state_class: "measurement"
+      unit_of_measurement: V
+      accuracy_decimals: 1
+    - name: "PV1 Current"
+      device_class: "current"
+      state_class: "measurement"  
+      unit_of_measurement: A
+      accuracy_decimals: 1
+    - name: "PV2 Current"
+      device_class: "current"
+      state_class: "measurement"  
+      unit_of_measurement: A
+      accuracy_decimals: 1
+    - name: "AC Current"
+      device_class: "current"
+      state_class: "measurement"  
+      unit_of_measurement: A
+      accuracy_decimals: 1
+    - name: "AC Voltage"
+      device_class: "voltage"
+      state_class: "measurement"  
+      unit_of_measurement: V
+      accuracy_decimals: 1
+    - name: "AC Frequency"
+      device_class: "frequency"
+      state_class: "measurement"  
+      unit_of_measurement: Hz
+      accuracy_decimals: 2
+    - name: "AC Power"
+      device_class: "power"
+      state_class: "measurement"  
+      unit_of_measurement: W
+      accuracy_decimals: 0
+    - name: "Energy Today"
+      device_class: "energy"
+      state_class: "total_increasing"
+      unit_of_measurement: kWh
+      accuracy_decimals: 2
+    - name: "Energy Total"
+      device_class: "energy"
+      state_class: "total_increasing"
+      unit_of_measurement: kWh
+      accuracy_decimals: 1
+    - name: "Hours Total"
+      device_class: "duration"
+      state_class: "total_increasing"
+      unit_of_measurement: h
+      accuracy_decimals: 0
+
+binary_sensor:
+  - platform: template
+    name: "Registered"
+    id: inverter_isRegistered
+
+text_sensor:
+  - platform: template
+    name: "Inverter SN"
+    id: inverter_serial
+
+number:
+  - platform: template
+    id: refresh_interval
+    name: "Refresh interval"
+    min_value: 1
+    max_value: 600
+    step: 1
+    restore_value: True
+    initial_value: 10
+    optimistic: True
+
+
+# button:
+#  - platform: template
+#    name: register
+#    on_press:
+#      - script.execute: inverter_register
+#  - platform: template
+#    name: request_data
+#    on_press:
+#      - script.execute: inverter_request_metrics
+#  - platform: restart
+#    name: "Reboot"
+
